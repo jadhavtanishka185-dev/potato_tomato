@@ -1,3 +1,4 @@
+import gdown
 import hmac
 import io
 import os
@@ -27,10 +28,23 @@ app = FastAPI(title="Plant Disease Prediction API", version="1.0.0")
 
 # Load model once at module import so every request reuses it.
 try:
+    # Check if model exists
+    if not os.path.exists(MODEL_PATH):
+        print("Model not found. Downloading from Google Drive...")
+
+        # Replace with your actual file ID
+        FILE_ID = '1PFQHgD2V_av1m3zO4XyLurvAyMU0iOmU'
+
+        url = f"https://drive.google.com/uc?id={FILE_ID}"
+        gdown.download(url, MODEL_PATH, quiet=False)
+
+        print("Model downloaded successfully.")
+
+    # Load model after ensuring it exists
     model = tf.keras.models.load_model(MODEL_PATH)
+
 except Exception as exc:
     raise RuntimeError(f"Failed to load model from '{MODEL_PATH}': {exc}") from exc
-
 
 def get_api_key() -> str:
     key = os.getenv(API_KEY_ENV_NAME)
