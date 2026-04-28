@@ -1,9 +1,13 @@
 import gdown
 import hmac
 import io
+import json
 import os
+import shutil
+import tempfile
 from typing import List
 
+import h5py
 import numpy as np
 import tensorflow as tf
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
@@ -26,23 +30,63 @@ API_KEY_ENV_NAME = "API_KEY"
 
 app = FastAPI(title="Plant Disease Prediction API", version="1.0.0")
 
-# Load model once at module import so every request reuses it.
-try:
-    # Check if model exists
-    if not os.path.exists(MODEL_PATH):
+def _remove_quantization_config(value):
+    if isinstance(value, dict):
+        value.pop("quantization_config", None)
+        for nested_value in value.values():
+            _remove_quantization_config(nested_value)
+    elif isinstance(value, list):
+        for item in value:
+            _remove_quantization_config(item)
+
+
+def _build_compat_model_copy(model_path: str) -> str:
+    fd, temp_model_path = tempfile.mkstemp(suffix=".h5")
+    os.close(fd)
+    shutil.copyfile(model_path, temp_model_path)
+
+    with h5py.File(temp_model_path, "r+") as h5_file:
+        raw_model_config = h5_file.attrs.get("model_config")
+        if raw_model_config is None:
+            return temp_model_path
+
+        if isinstance(raw_model_config, bytes):
+            model_config = json.loads(raw_model_config.decode("utf-8"))
+        else:
+            model_config = json.loads(raw_model_config)
+
+        _remove_quantization_config(model_config)
+        h5_file.attrs["model_config"] = json.dumps(model_config).encode("utf-8")
+
+    return temp_model_path
+
+
+def load_prediction_model(model_path: str):
+    if not os.path.exists(model_path):
         print("Model not found. Downloading from Google Drive...")
 
-        # Replace with your actual file ID
-        FILE_ID = '1PFQHgD2V_av1m3zO4XyLurvAyMU0iOmU'
-
-        url = f"https://drive.google.com/uc?id={FILE_ID}"
-        gdown.download(url, MODEL_PATH, quiet=False)
-
+        file_id = "1PFQHgD2V_av1m3zO4XyLurvAyMU0iOmU"
+        url = f"https://drive.google.com/uc?id={file_id}"
+        gdown.download(url, model_path, quiet=False)
         print("Model downloaded successfully.")
 
-    # Load model after ensuring it exists
-    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+    try:
+        return tf.keras.models.load_model(model_path, compile=False)
+    except TypeError as exc:
+        if "quantization_config" not in str(exc):
+            raise
 
+        compat_model_path = _build_compat_model_copy(model_path)
+        try:
+            return tf.keras.models.load_model(compat_model_path, compile=False)
+        finally:
+            if os.path.exists(compat_model_path):
+                os.remove(compat_model_path)
+
+
+# Load model once at module import so every request reuses it.
+try:
+    model = load_prediction_model(MODEL_PATH)
 except Exception as exc:
     raise RuntimeError(f"Failed to load model from '{MODEL_PATH}': {exc}") from exc
 
