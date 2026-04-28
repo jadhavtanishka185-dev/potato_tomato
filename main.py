@@ -41,7 +41,7 @@ try:
         print("Model downloaded successfully.")
 
     # Load model after ensuring it exists
-    model = tf.keras.models.load_model(MODEL_PATH)
+    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
 
 except Exception as exc:
     raise RuntimeError(f"Failed to load model from '{MODEL_PATH}': {exc}") from exc
